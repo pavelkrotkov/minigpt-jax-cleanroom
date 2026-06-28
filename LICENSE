@@ -1,0 +1,10 @@
+
+## License
+
+Use **MIT** unless you have a reason not to. It is simple and compatible with educational code.
+
+But make sure your README says something like:
+
+```text
+This license applies only to the original code and documentation in this repository.
+It does not license any third-party course content, dataset, model checkpoint, or library.
