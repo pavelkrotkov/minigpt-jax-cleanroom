@@ -115,9 +115,28 @@ def load_stories_from_file(file_path: str | Path, max_stories: Optional[int] = N
         stories = SAMPLE_STORIES.copy()
         return stories[:max_stories] if max_stories is not None else stories
 
-    data = path.read_text(encoding="utf-8", errors="replace")
-    raw_stories = [s.strip() for s in data.split("<|endoftext|>") if s.strip()]
-    stories = [s + " <|endoftext|>" for s in raw_stories]
+    stories = []
+    current: list[str] = []
+    with path.open("r", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            if "<|endoftext|>" in line:
+                parts = line.split("<|endoftext|>")
+                for part in parts[:-1]:
+                    current.append(part)
+                    text = "".join(current).strip()
+                    if text:
+                        stories.append(text + " <|endoftext|>")
+                    current = []
+                    if max_stories is not None and len(stories) >= max_stories:
+                        return stories
+                if parts[-1]:
+                    current.append(parts[-1])
+            else:
+                current.append(line)
+    if current:
+        text = "".join(current).strip()
+        if text:
+            stories.append(text + " <|endoftext|>")
     return stories[:max_stories] if max_stories is not None else stories
 
 
@@ -382,10 +401,10 @@ def build_nnx_classes():
         ) -> None:
             self.maxlen = maxlen
             self.embedding = TokenAndPositionEmbedding(maxlen, vocab_size, embed_dim, rngs=rngs)
-            self.transformer_blocks = [
+            self.transformer_blocks = nnx.List([
                 TransformerBlock(embed_dim, num_heads, feed_forward_dim, rngs=rngs)
                 for _ in range(num_transformer_blocks)
-            ]
+            ])
             self.output_layer = nnx.Linear(embed_dim, vocab_size, use_bias=False, rngs=rngs)
 
         def causal_attention_mask(self, seq_len: int) -> jnp.ndarray:
@@ -427,11 +446,16 @@ def build_course_nnx_model(
     )
 
 
-def nnx_loss_fn(model, batch: tuple[jnp.ndarray, jnp.ndarray]):
-    """Corrected Optax cross-entropy loss for the NNX model."""
+def nnx_loss_fn(model, batch: jnp.ndarray):
+    """Corrected Optax cross-entropy loss for the NNX model.
+
+    Accepts a raw token batch of shape [batch, seq] as returned by
+    create_numpy_batches and derives next-token targets internally.
+    """
     import optax  # type: ignore
 
-    inputs, targets = batch
+    inputs = jnp.asarray(batch, dtype=jnp.int32)
+    targets = make_target_batch(inputs)
     logits = model(inputs)
     loss = optax.softmax_cross_entropy_with_integer_labels(
         logits=logits,
@@ -668,9 +692,9 @@ def generate_text_jax(
 
     for _ in range(max_new_tokens):
         context = token_ids[-config.maxlen :]
-        padded = [0] * (config.maxlen - len(context)) + context
+        padded = context + [0] * (config.maxlen - len(context))
         inputs = jnp.asarray([padded], dtype=jnp.int32)
-        logits = jax_minigpt_forward(params, inputs, config)[0, -1]
+        logits = jax_minigpt_forward(params, inputs, config)[0, len(context) - 1]
         key, subkey = jax.random.split(key)
         if temperature <= 0:
             next_id = int(jnp.argmax(logits))
