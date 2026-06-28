@@ -177,7 +177,7 @@ class SimpleTokenizer:
         pieces = [self.id_to_token.get(int(i), "<unk>") for i in ids if int(i) != 0]
         text = " ".join(pieces)
         text = re.sub(r"\s+([,.;:!?])", r"\1", text)
-        return text.replace(" <|endoftext|>", "")
+        return text.replace("<|endoftext|>", "").strip()
 
 
 def get_tokenizer(stories_for_fallback_fit: Optional[Sequence[str]] = None):
@@ -322,10 +322,10 @@ def load_and_preprocess_data(
     )
 
 
-def make_target_batch(input_batch: jnp.ndarray) -> jnp.ndarray:
+def make_target_batch(input_batch: jnp.ndarray, pad_token: int = 0) -> jnp.ndarray:
     """Shift every token sequence left by one position for next-token targets."""
     return jnp.concatenate(
-        [input_batch[:, 1:], jnp.zeros((input_batch.shape[0], 1), dtype=input_batch.dtype)],
+        [input_batch[:, 1:], jnp.full((input_batch.shape[0], 1), pad_token, dtype=input_batch.dtype)],
         axis=1,
     )
 
@@ -446,7 +446,7 @@ def build_course_nnx_model(
     )
 
 
-def nnx_loss_fn(model, batch: jnp.ndarray):
+def nnx_loss_fn(model, batch: jnp.ndarray, pad_token: int = 0):
     """Corrected Optax cross-entropy loss for the NNX model.
 
     Accepts a raw token batch of shape [batch, seq] as returned by
@@ -455,12 +455,14 @@ def nnx_loss_fn(model, batch: jnp.ndarray):
     import optax  # type: ignore
 
     inputs = jnp.asarray(batch, dtype=jnp.int32)
-    targets = make_target_batch(inputs)
+    targets = make_target_batch(inputs, pad_token=pad_token)
     logits = model(inputs)
-    loss = optax.softmax_cross_entropy_with_integer_labels(
+    per_token_loss = optax.softmax_cross_entropy_with_integer_labels(
         logits=logits,
         labels=targets,
-    ).mean()
+    )
+    non_padding = (targets != pad_token).astype(jnp.float32)
+    loss = (per_token_loss * non_padding).sum() / jnp.maximum(non_padding.sum(), 1.0)
     return loss, logits
 
 
@@ -513,11 +515,12 @@ def create_nnx_optimizer_and_metrics(model, total_steps: int, warmup_ratio: floa
     import optax  # type: ignore
 
     warmup_steps = max(1, int(total_steps * warmup_ratio))
+    decay_steps = max(1, total_steps - warmup_steps)
     lr_schedule = optax.warmup_cosine_decay_schedule(
         init_value=0.0,
         peak_value=3e-4,
         warmup_steps=warmup_steps,
-        decay_steps=total_steps,
+        decay_steps=decay_steps,
         end_value=1e-5,
     )
     optimizer = nnx.Optimizer(
