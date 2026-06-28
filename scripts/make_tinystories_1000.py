@@ -130,6 +130,9 @@ def main() -> int:
     if not args.input.exists():
         raise SystemExit(f"Input file not found: {args.input}")
 
+    if args.input.resolve() == args.output.resolve():
+        raise SystemExit("--input and --output must be different files.")
+
     if args.output.exists() and not args.force:
         raise SystemExit(
             f"Refusing to overwrite existing file: {args.output}\n"

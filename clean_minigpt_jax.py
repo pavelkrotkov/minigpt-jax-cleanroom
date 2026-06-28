@@ -580,6 +580,7 @@ class JaxMiniGPTConfig:
     embed_dim: int = 32
     num_heads: int = 4
     num_transformer_blocks: int = 2
+    pad_token: int = 0
 
     def __post_init__(self) -> None:
         if self.embed_dim % self.num_heads != 0:
@@ -643,11 +644,11 @@ def jax_minigpt_forward(params, token_ids: jnp.ndarray, config: JaxMiniGPTConfig
 
 
 def jax_cross_entropy_loss(params, input_batch: jnp.ndarray, config: JaxMiniGPTConfig) -> jnp.ndarray:
-    targets = make_target_batch(input_batch)
+    targets = make_target_batch(input_batch, pad_token=config.pad_token)
     logits = jax_minigpt_forward(params, input_batch, config)
     log_probs = jax.nn.log_softmax(logits, axis=-1)
     token_losses = -jnp.take_along_axis(log_probs, targets[..., None], axis=-1).squeeze(-1)
-    non_padding = (targets != 0).astype(jnp.float32)
+    non_padding = (targets != config.pad_token).astype(jnp.float32)
     denom = jnp.maximum(non_padding.sum(), 1.0)
     return (token_losses * non_padding).sum() / denom
 
@@ -689,7 +690,7 @@ def generate_text_jax(
 ) -> str:
     key = jax.random.PRNGKey(seed)
     end_token = tokenizer.encode("<|endoftext|>", allowed_special={"<|endoftext|>"})[0]
-    token_ids = tokenizer.encode(prompt, allowed_special={"<|endoftext|>"})[: config.maxlen]
+    token_ids = tokenizer.encode(prompt, allowed_special={"<|endoftext|>"})[-config.maxlen :]
     if not token_ids:
         token_ids = [0]
 
