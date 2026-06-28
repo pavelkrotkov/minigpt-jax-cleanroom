@@ -1,0 +1,9 @@
+data/*.txt
+data/*.jsonl
+data/*.tar.gz
+*.orbax/
+*_checkpoint*/
+__pycache__/
+.ipynb_checkpoints/
+.venv/
+.DS_Store

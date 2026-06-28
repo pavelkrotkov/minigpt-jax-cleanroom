@@ -1,0 +1,9 @@
+jax[cpu]
+numpy
+flax
+optax
+orbax-checkpoint
+grain
+tiktoken
+matplotlib
+gradio
